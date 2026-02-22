@@ -1,121 +1,106 @@
-// proxy-server.js
-// Héberge ce fichier sur Render.com (gratuit)
-// Il fait le pont entre ton jeu Roblox et l'API Roblox
-//
-// DEPLOY sur Render.com :
-// 1. Crée un compte sur https://render.com
-// 2. New > Web Service > "Deploy from a public Git repo" OU colle ce fichier
-// 3. Build Command : npm install
-// 4. Start Command : node proxy-server.js
-// 5. Copie l'URL fournie par Render (ex: https://mon-proxy.onrender.com)
-// 6. Colle cette URL dans Assets Loader.lua à la ligne PROXY_URL
-
+// proxy-server.js — version corrigée
 const https = require("https");
-const http = require("http");
-const url = require("url");
+const http  = require("http");
+const url   = require("url");
 
 const PORT = process.env.PORT || 3000;
 
-// ═══════════════════════════════════════
-// Fonction de requête vers l'API Roblox
-// ═══════════════════════════════════════
 function fetchRoblox(targetUrl) {
   return new Promise((resolve, reject) => {
-    const options = {
+    const req = https.get(targetUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0",
+        "User-Agent": "Mozilla/5.0 (compatible; RobloxProxy/1.0)",
         "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
       },
-      timeout: 8000,
-    };
-    https.get(targetUrl, options, (res) => {
+      timeout: 10000,
+    }, (res) => {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => resolve({ status: res.statusCode, body: data }));
-    }).on("error", reject).on("timeout", () => reject(new Error("Timeout")));
+      res.on("end", () => {
+        console.log(`[PROXY] ${res.statusCode} ${targetUrl}`);
+        resolve({ status: res.statusCode, body: data });
+      });
+    });
+    req.on("error", (e) => {
+      console.error(`[PROXY] ERROR ${targetUrl}:`, e.message);
+      reject(e);
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Request timeout"));
+    });
   });
 }
 
-// ═══════════════════════════════════════
-// Routes
-// ═══════════════════════════════════════
+const ROUTES = {
+  // /clothing?username=XXX&subcategory=55
+  "/clothing": async (q) => {
+    const { username, subcategory } = q;
+    if (!username || !subcategory) return { code: 400, body: { error: "username and subcategory required" } };
+    const apiUrl = `https://catalog.roblox.com/v1/search/items/details?Category=3&Subcategory=${subcategory}&Limit=30&CreatorName=${encodeURIComponent(username)}`;
+    return fetchRoblox(apiUrl);
+  },
+
+  // /games?userId=XXX
+  "/games": async (q) => {
+    const { userId } = q;
+    if (!userId) return { code: 400, body: { error: "userId required" } };
+    const apiUrl = `https://games.roblox.com/v2/users/${userId}/games?accessFilter=Public&limit=50&sortOrder=Asc`;
+    return fetchRoblox(apiUrl);
+  },
+
+  // /placedetails?placeId=XXX
+  "/placedetails": async (q) => {
+    const { placeId } = q;
+    if (!placeId) return { code: 400, body: { error: "placeId required" } };
+    const apiUrl = `https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`;
+    return fetchRoblox(apiUrl);
+  },
+
+  // /gamepasses?universeId=XXX
+  "/gamepasses": async (q) => {
+    const { universeId } = q;
+    if (!universeId) return { code: 400, body: { error: "universeId required" } };
+    const apiUrl = `https://games.roblox.com/v1/universes/${universeId}/game-passes?limit=100&sortOrder=Asc`;
+    return fetchRoblox(apiUrl);
+  },
+
+  // /health
+  "/health": async () => {
+    return { status: 200, body: JSON.stringify({ ok: true, time: Date.now() }) };
+  },
+};
+
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Content-Type", "application/json");
 
   const parsed = url.parse(req.url, true);
-  const path = parsed.pathname;
-  const q = parsed.query;
+  const handler = ROUTES[parsed.pathname];
+
+  if (!handler) {
+    // Log toutes les routes inconnues pour debug
+    console.warn("[PROXY] Route inconnue:", req.url);
+    res.writeHead(404);
+    return res.end(JSON.stringify({ error: "Route not found", path: parsed.pathname, available: Object.keys(ROUTES) }));
+  }
 
   try {
-    // GET /clothing?username=XXX&subcategory=55
-    if (path === "/clothing") {
-      const { username, subcategory } = q;
-      if (!username || !subcategory) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({ error: "username and subcategory required" }));
-      }
-      const apiUrl = `https://catalog.roblox.com/v1/search/items/details?Category=3&Subcategory=${subcategory}&Limit=30&CreatorName=${encodeURIComponent(username)}`;
-      const result = await fetchRoblox(apiUrl);
-      res.writeHead(result.status);
-      return res.end(result.body);
-    }
-
-    // GET /games?userId=XXX
-    if (path === "/games") {
-      const { userId } = q;
-      if (!userId) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({ error: "userId required" }));
-      }
-      const apiUrl = `https://games.roblox.com/v2/users/${userId}/games?accessFilter=Public&limit=50&sortOrder=Asc`;
-      const result = await fetchRoblox(apiUrl);
-      res.writeHead(result.status);
-      return res.end(result.body);
-    }
-
-    // GET /placedetails?placeId=XXX
-    if (path === "/placedetails") {
-      const { placeId } = q;
-      if (!placeId) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({ error: "placeId required" }));
-      }
-      const apiUrl = `https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`;
-      const result = await fetchRoblox(apiUrl);
-      res.writeHead(result.status);
-      return res.end(result.body);
-    }
-
-    // GET /gamepasses?universeId=XXX
-    if (path === "/gamepasses") {
-      const { universeId } = q;
-      if (!universeId) {
-        res.writeHead(400);
-        return res.end(JSON.stringify({ error: "universeId required" }));
-      }
-      const apiUrl = `https://games.roblox.com/v1/universes/${universeId}/game-passes?limit=100&sortOrder=Asc`;
-      const result = await fetchRoblox(apiUrl);
-      res.writeHead(result.status);
-      return res.end(result.body);
-    }
-
-    // GET /health
-    if (path === "/health") {
-      res.writeHead(200);
-      return res.end(JSON.stringify({ status: "ok", time: Date.now() }));
-    }
-
-    res.writeHead(404);
-    res.end(JSON.stringify({ error: "Route not found" }));
-
+    const result = await handler(parsed.query);
+    // result peut avoir .status ou .code
+    const statusCode = result.status || result.code || 200;
+    const body = typeof result.body === "string" ? result.body : JSON.stringify(result.body);
+    res.writeHead(statusCode);
+    res.end(body);
   } catch (err) {
-    console.error("Proxy error:", err.message);
-    res.writeHead(500);
-    res.end(JSON.stringify({ error: err.message }));
+    console.error("[PROXY] Erreur handler:", err.message);
+    res.writeHead(502);
+    res.end(JSON.stringify({ error: "Upstream error", message: err.message }));
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`Proxy running on port ${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Proxy running on port ${PORT}`);
+  console.log("Routes disponibles:", Object.keys(ROUTES).join(", "));
 });
