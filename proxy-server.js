@@ -51,10 +51,11 @@ const ROUTES = {
   },
 
   // /placedetails?placeId=XXX
+  // ✅ Utilise l'API publique — pas besoin d'auth contrairement à multiget-place-details
   "/placedetails": async (q) => {
     const { placeId } = q;
     if (!placeId) return { code: 400, body: { error: "placeId required" } };
-    const apiUrl = `https://games.roblox.com/v1/games/multiget-place-details?placeIds=${placeId}`;
+    const apiUrl = `https://apis.roblox.com/universes/v1/places/${placeId}/universe`;
     return fetchRoblox(apiUrl);
   },
 
