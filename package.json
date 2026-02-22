@@ -1,0 +1,12 @@
+{
+  "name": "roblox-proxy",
+  "version": "1.0.0",
+  "description": "Proxy pour contourner les restrictions HTTP de Roblox",
+  "main": "proxy-server.js",
+  "scripts": {
+    "start": "node proxy-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
